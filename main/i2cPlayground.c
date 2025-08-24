@@ -117,6 +117,15 @@ bool send_data(const char *data, uint32_t size) {
     return true;
 }
 
+uint32_t read_uart(char *buf, uint32_t size) {
+    return uart_read_bytes(UART_PORT, buf, size, pdMS_TO_TICKS(100));
+}
+
+bool get_uart_data_size(uint32_t *size) {
+    uart_get_buffered_data_len(UART_PORT, (size_t *) size);
+    return true;
+}
+
 void app_main(void) {
     i2c_master_bus_handle_t bus = NULL;
     i2c_master_bus_config_t bus_cfg = {
@@ -171,20 +180,7 @@ void app_main(void) {
              ADS1115_I2C_Addr);
 
     ESP_ERROR_CHECK(write_dac_voltage(dev_dac1, 1.45f));
-    ESP_ERROR_CHECK(write_dac_voltage(dev_dac2, 2.27f));
-    uint32_t t0 = esp_log_timestamp();
-    for (int i = 0; i < 4; i++) {
-        uint16_t config = ads1115_make_config(muxArray[i]);
-        ESP_ERROR_CHECK(ads1115_write_config(ads, config));
-        float res;
-        if (read_data(ads, &res, 100) == ESP_OK) {
-            ESP_LOGI(TAG, "AN%d has %.2f", i, res);
-        } else {
-            ESP_LOGI(TAG, "AN%d failed");
-        }
-    }
-    uint32_t dt = esp_log_timestamp() - t0;  // ms
-    ESP_LOGI(TAG, "elapsed = %u ms", (unsigned) dt);
+
 
     ESP_ERROR_CHECK(uart_driver_install(UART_PORT, BUF_SIZE, 0, 0, NULL, 0));
     ESP_ERROR_CHECK(uart_param_config(UART_PORT, &uart_config));
@@ -192,13 +188,21 @@ void app_main(void) {
                                  UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
     //fflush(stdout);  // flush stdio buffers (newlib)
     //esp_rom_output_tx_wait_idle(UART_NUM_0);   // wait until UART0 finished transmitting
-    Dashboard_Init(send_data);
-    int32_t num = 0;
+    Dashboard_Init(send_data, read_uart, get_uart_data_size);
+    uint32_t num = 1;
+    Dashboard_Register_LiveInt("AA", "VoltNum", &num);
     while (1) {
-        Dashboard_Telemetry_Int("test1", num);
+        ESP_ERROR_CHECK(write_dac_voltage(dev_dac2, (float) num));
+        uint16_t config = ads1115_make_config(muxArray[3]);
+        ESP_ERROR_CHECK(ads1115_write_config(ads, config));
+        float res;
+        if (read_data(ads, &res, 100) == ESP_OK) {
+            Dashboard_Telemetry_Float("AN3", res);
+        } else {
+            ESP_LOGI(TAG, "AN%d failed");
+        }
+
         Dashboard_Send();
-        num += 1;
-        //send_data("ping\r\n",6);
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 
