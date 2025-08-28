@@ -3,49 +3,43 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <esp_log.h>
 
 enum {
     kTelemetryBufSize = 400,
+    kAlertBufSize = 200,
     kMapBufSize = 50,
     kNumBufSize = 12,
     kFloatBufSize = 12,
     mapEntries = 5,
 };
 
-typedef struct Packet {
+typedef struct __attribute__((packed)) Packet {
     uint8_t packet_id;
     uint16_t packet_length;
     char data_buf[3];
     union {
         float float_data;
-        int int_data;
+        int32_t int_data;
     };
     uint32_t checksum;
 } Packet_t;
 
-typedef enum DataState {
-    IDLE = 0,
-    HEADER_RECEIVED,
-    SIZE_RECEIVED,
-    STRING_DATA_RECEIVED,
-    NUMERIC_DATA_RECEIVED,
-    CHECKSUM_RECEIVED
-} DataState_t;
 typedef struct Dashboard {
     uint32_t telemetrySize;
     uint32_t liveDataSize;
+    uint32_t alertSize;
     fpSendData sendData;
     fpReadData readData;
     fpHasData hasData;
     Packet_t packet;
-    DataState_t dataState;
     uint8_t intCount;
 } Dashboard_t;
 
 
 char floatMapKeys[mapEntries][3] = {{0}};
 char integerMapKeys[mapEntries][3] = {{0}};
-uint32_t *intMapValues[mapEntries] = {0};
+int32_t *intMapValues[mapEntries] = {0};
 float *floatMapValues[mapEntries] = {0};
 static char numBuffer[kNumBufSize] = {0};
 static char floatBuffer[kFloatBufSize] = {0};
@@ -53,6 +47,7 @@ static char floatBuffer[kFloatBufSize] = {0};
 
 static char buffer[kTelemetryBufSize] = {0};
 static char mapBuffer[kMapBufSize] = {0};
+static char alertBuffer[kAlertBufSize] = {0};
 
 static Dashboard_t dashboard;
 
@@ -67,12 +62,22 @@ void processData();
 void Dashboard_Init(fpSendData fp, fpReadData fpRead, fpHasData fpHas) {
     memcpy(buffer, "CWC!", 4);
     memcpy(mapBuffer, "CWCM", 4);
+    memcpy(alertBuffer, "CWCA", 4);
 
     dashboard.sendData = fp;
     dashboard.hasData = fpHas;
     dashboard.readData = fpRead;
     dashboard.telemetrySize = 4;
     dashboard.liveDataSize = 4;
+    dashboard.alertSize = 4;
+}
+
+void Dashboard_Alert(const char *str) {
+    uint32_t size = strlen(str);
+    memcpy(&alertBuffer[dashboard.alertSize], str, size);
+    dashboard.alertSize += size;
+    memcpy(&alertBuffer[dashboard.alertSize], ";", 1);
+    dashboard.alertSize += 1;
 }
 
 void Dashboard_Telemetry_Str(const char *key, const char *value) {
@@ -106,12 +111,21 @@ void Dashboard_Send() {
     buffer[dashboard.telemetrySize] = '\r';
     buffer[dashboard.telemetrySize + 1] = '\n';
     dashboard.sendData(buffer, dashboard.telemetrySize + 2);
+
     memset(buffer, 0, kTelemetryBufSize);
-    strcat(buffer, "CWC!");
+    memcpy(buffer, "CWC!", 4);
     dashboard.telemetrySize = 4;
+
+    alertBuffer[dashboard.alertSize] = '\r';
+    alertBuffer[dashboard.alertSize + 1] = '\n';
+    dashboard.sendData(alertBuffer, dashboard.alertSize + 2);
+
+    memset(alertBuffer, 0, kAlertBufSize);
+    memcpy(alertBuffer, "CWCA", 4);
+    dashboard.alertSize = 4;
 }
 
-void Dashboard_Register_LiveInt(const char *key, const char *v, uint32_t *ptr) {
+void Dashboard_Register_LiveInt(const char *key, const char *v, int32_t *ptr) {
 
     uint32_t valueSize = strlen(v);
     memcpy(integerMapKeys[dashboard.intCount], "I", 1);
@@ -139,23 +153,31 @@ void processData() {
         if (readSize != sizeof(dashboard.packet.packet_id) || dashboard.packet.packet_id != 0x13) {
             return;
         }
+        ESP_LOGI("Dashboard", "Received packet id");
         uint32_t remainingPacketSize = sizeof(Packet_t) - sizeof(dashboard.packet.packet_id);
         readSize = dashboard.readData((char *) &dashboard.packet.packet_length, remainingPacketSize);
         uint32_t packetSizeWithCRC = sizeof(Packet_t) - sizeof(dashboard.packet.checksum);
-        if (readSize != remainingPacketSize ||
-            crc32((char *) &dashboard.packet, packetSizeWithCRC) != dashboard.packet.checksum) {
+        //if (readSize != remainingPacketSize ||crc32((char *) &dashboard.packet, packetSizeWithCRC) != dashboard.packet.checksum) {
+        if (readSize != remainingPacketSize) {
             return;
         }
+        ESP_LOGI("Dashboard","Received entire pack");
         char dataType = dashboard.packet.data_buf[0];
         if (dataType == 'I') {
+            ESP_LOGI("Dashboard","Integer type found");
+
             int8_t idx = -1;
-            for (int8_t i = 0; i < mapEntries; i++) {
-                if (memcmp(&dashboard.packet.data_buf, integerMapKeys[i], sizeof(integerMapKeys[0])) == 0) {
+            ESP_LOGI("Dashboard", "b (hex) = %02X %02X %02X",(unsigned)dashboard.packet.data_buf[0], (unsigned)dashboard.packet.data_buf[1], (unsigned)dashboard.packet.data_buf[2]);
+
+            for (int8_t i = 0; i < dashboard.intCount; i++) {
+                if (memcmp(dashboard.packet.data_buf, integerMapKeys[i], sizeof(integerMapKeys[0])) == 0) {
                     idx = i;
                     break;
                 }
             }
             if (idx != -1) {
+                ESP_LOGI("Dashboard", "received int %d", dashboard.packet.int_data);
+
                 *intMapValues[idx] = dashboard.packet.int_data;
             }
         }

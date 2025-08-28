@@ -189,19 +189,20 @@ void app_main(void) {
     //fflush(stdout);  // flush stdio buffers (newlib)
     //esp_rom_output_tx_wait_idle(UART_NUM_0);   // wait until UART0 finished transmitting
     Dashboard_Init(send_data, read_uart, get_uart_data_size);
-    uint32_t num = 1;
+    int32_t num = 1;
     Dashboard_Register_LiveInt("AA", "VoltNum", &num);
     while (1) {
-        ESP_ERROR_CHECK(write_dac_voltage(dev_dac2, (float) num));
+        //Dashboard_Alert("idek anymore");
+        ESP_ERROR_CHECK(write_dac_voltage(dev_dac2, 1.4f));
         uint16_t config = ads1115_make_config(muxArray[3]);
         ESP_ERROR_CHECK(ads1115_write_config(ads, config));
         float res;
+        Dashboard_Telemetry_Int("Number", num);
         if (read_data(ads, &res, 100) == ESP_OK) {
             Dashboard_Telemetry_Float("AN3", res);
         } else {
             ESP_LOGI(TAG, "AN%d failed");
         }
-
         Dashboard_Send();
         vTaskDelay(pdMS_TO_TICKS(100));
     }
