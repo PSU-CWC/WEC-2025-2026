@@ -9,6 +9,7 @@
 #include "driver/uart.h"
 //
 #include "Dashboard.h"
+#include "MCP4725.h"
 
 static const char *TAG = "ADS1115";
 
@@ -90,7 +91,7 @@ static esp_err_t read_data(i2c_master_dev_handle_t dev, float *res, uint8_t time
                 data = 0.0f;
             }
             *res = data;
-            ESP_LOGI(TAG, "TOOK %u to sample", timeout_counter);
+            //ESP_LOGI(TAG, "TOOK %u to sample", timeout_counter);
             return ESP_OK;
         }
         timeout_counter += Sample_Time_MS;
@@ -98,19 +99,7 @@ static esp_err_t read_data(i2c_master_dev_handle_t dev, float *res, uint8_t time
     return ESP_FAIL;
 }
 
-static esp_err_t write_dac_voltage(i2c_master_dev_handle_t dev, float voltage) {
 
-    uint16_t code = (uint16_t) lrintf(voltage * 4095.0f / 3.3f);
-
-    // Fast mode payload:
-    // Byte0: [7:6]=00, [5:4]=PD(00 normal), [3:0]=D11..D8
-    // Byte1: D7..D0
-    uint8_t payload[2] = {
-            (uint8_t) (((0 & 0x3) << 4) | ((code >> 8) & 0x0F)),
-            (uint8_t) (code & 0xFF)
-    };
-    return i2c_master_transmit(dev, payload, sizeof(payload), 100);
-}
 
 bool send_data(const char *data, uint32_t size) {
     uart_write_bytes(UART_PORT, data, size);
@@ -179,25 +168,33 @@ void app_main(void) {
     ESP_LOGI(TAG, "I2C ready on SDA=%d SCL=%d @ %d Hz, ADS1115 @ 0x%02X", I2C_SDA_PIN, I2C_SCL_PIN, I2C_FREQ_HZ,
              ADS1115_I2C_Addr);
 
-    ESP_ERROR_CHECK(write_dac_voltage(dev_dac1, 1.45f));
+    ESP_ERROR_CHECK(MCP4725_Set_Output_Voltage(dev_dac1, 1.45f));
 
 
-    ESP_ERROR_CHECK(uart_driver_install(UART_PORT, BUF_SIZE, 0, 0, NULL, 0));
+    ESP_ERROR_CHECK(uart_driver_install(UART_PORT, BUF_SIZE, BUF_SIZE, 0, NULL, 0));
     ESP_ERROR_CHECK(uart_param_config(UART_PORT, &uart_config));
     ESP_ERROR_CHECK(uart_set_pin(UART_PORT, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE,
                                  UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
-    //fflush(stdout);  // flush stdio buffers (newlib)
-    //esp_rom_output_tx_wait_idle(UART_NUM_0);   // wait until UART0 finished transmitting
+
+
     Dashboard_Init(send_data, read_uart, get_uart_data_size);
     int32_t num = 1;
+    int32_t num2 = 3;
+    float f = 1.4f;
     Dashboard_Register_LiveInt("AA", "VoltNum", &num);
+    Dashboard_Register_LiveInt("AB", "VoltNum2", &num2);
+    Dashboard_Register_LiveFloat("AC", "Float1", &f);
     while (1) {
-        //Dashboard_Alert("idek anymore");
-        ESP_ERROR_CHECK(write_dac_voltage(dev_dac2, 1.4f));
+        if (num == 11) {
+            Dashboard_Alert("idek anymore");
+        }
+        ESP_ERROR_CHECK(MCP4725_Set_Output_Voltage(dev_dac2, f));
         uint16_t config = ads1115_make_config(muxArray[3]);
         ESP_ERROR_CHECK(ads1115_write_config(ads, config));
         float res;
         Dashboard_Telemetry_Int("Number", num);
+        Dashboard_Telemetry_Int("Number2", num2);
+        Dashboard_Telemetry_Float("Float1", f);
         if (read_data(ads, &res, 100) == ESP_OK) {
             Dashboard_Telemetry_Float("AN3", res);
         } else {
@@ -207,7 +204,6 @@ void app_main(void) {
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 
-    // (Unreached in this loop; shown for completeness)
     // ESP_ERROR_CHECK(i2c_master_bus_rm_device(ads));
     // ESP_ERROR_CHECK(i2c_del_master_bus(bus));
 }

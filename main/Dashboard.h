@@ -21,4 +21,6 @@ void Dashboard_Telemetry_Float(const char *key, float num);
 
 void Dashboard_Register_LiveInt(const char *key, const char *v, int32_t *ptr);
 
+void Dashboard_Register_LiveFloat(const char *key, const char *v, float *ptr);
+
 void Dashboard_Send();
