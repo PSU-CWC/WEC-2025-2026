@@ -1,3 +1,3 @@
-idf_component_register(SRCS "i2cPlayground.c" "Dashboard.h" "Dashboard.c" "MCP4725.c"
-        REQUIRES esp_driver_i2c log driver
+idf_component_register(SRCS "i2cPlayground.c" "Dashboard.h" "Dashboard.c" "MCP4725.c" "ADS1115.c"
+        REQUIRES esp_driver_i2c log driver esp_timer
         INCLUDE_DIRS ".")

@@ -7,11 +7,12 @@
 #include "esp_log.h"
 #include "driver/i2c_master.h"
 #include "driver/uart.h"
-//
+
 #include "Dashboard.h"
 #include "MCP4725.h"
+#include "ADS1115.h"
 
-static const char *TAG = "ADS1115";
+static const char *TAG = "Main";
 
 #define I2C_PORT            0                   // I2C_NUM_0
 #define I2C_SDA_PIN         21
@@ -25,81 +26,8 @@ enum {
     DAC2_I2C_ADDR = 0x61,
     Conversion_Register_Addr = 00,
     Config_Register_Addr = 01,
-    Mux_AIN0 = 0b100,
-    Mux_AIN1 = 0b101,
-    Mux_AIN2 = 0b110,
-    Mux_AIN3 = 0b111,
     Sample_Time_MS = 4,
 };
-static uint8_t muxArray[] = {Mux_AIN0, Mux_AIN1, Mux_AIN2, Mux_AIN3};
-
-static inline uint16_t ads1115_make_config(uint8_t mux) {
-    // OS=1 (start single conversion)
-    // MUX=100 (AIN0 vs GND)
-    // PGA=001 (±4.096V)
-    // MODE=1 (single-shot)
-    // DR=101 (250 SPS)
-    // COMP_MODE=0, POL=0, LAT=0, COMP_QUE=11 (disable comparator)
-    return (1u << 15) | (mux << 12) | (0b001u << 9) | (1u << 8) |
-           (0b101u << 5) | (0u << 4) | (0u << 3) | (0u << 2) | (0b11u);
-}
-
-
-// Write [pointer, MSB, LSB] to config register
-static esp_err_t ads1115_write_config(i2c_master_dev_handle_t dev, uint16_t cfg) {
-    uint8_t buf[3] = {
-            Config_Register_Addr,
-            (uint8_t) (cfg >> 8),
-            (uint8_t) (cfg & 0xFF)
-    };
-    return i2c_master_transmit(dev, buf, sizeof(buf), 100);
-}
-
-// Read a 16-bit register: write pointer, then read 2 bytes
-static esp_err_t ads1115_read_u16(i2c_master_dev_handle_t dev, uint8_t reg, uint16_t *out) {
-
-    // 1115 is big endian, however ESP is little endian
-    // can't make rx into uint16_t because rx = 0x1234 which is wrong in little endian
-    uint8_t rx[2];
-    esp_err_t err = i2c_master_transmit_receive(dev, &reg, 1, rx, 2, 100);
-    if (err != ESP_OK) return err;
-    // *out = 0x1234 => *out gets stored as 0x3412 by the computer BUT != memcpy(rx, 0x1234)
-    *out = ((uint16_t) rx[0] << 8) | rx[1];
-    return ESP_OK;
-}
-
-static bool is_data_ready(uint16_t data) {
-    uint16_t mask = 1u << 15;
-    return (data & mask) != 1;
-}
-
-static esp_err_t read_data(i2c_master_dev_handle_t dev, float *res, uint8_t timeout) {
-    uint8_t timeout_counter = 0;
-    while (timeout_counter < timeout) {
-        vTaskDelay(pdMS_TO_TICKS(Sample_Time_MS));
-        uint16_t config;
-        ESP_RETURN_ON_ERROR(ads1115_read_u16(dev, Config_Register_Addr, &config), TAG,
-                            "Failed to read config register");
-        if (is_data_ready(config)) {
-            uint16_t raw_data;
-            ESP_RETURN_ON_ERROR(ads1115_read_u16(dev, Conversion_Register_Addr, &raw_data), TAG,
-                                "Failed to read conversion register");
-            int16_t raw = (int16_t) raw_data;
-            float lsb = 4.096f / 32768.0f;
-            float data = (float) raw * lsb;
-            if (data < 0) {
-                data = 0.0f;
-            }
-            *res = data;
-            //ESP_LOGI(TAG, "TOOK %u to sample", timeout_counter);
-            return ESP_OK;
-        }
-        timeout_counter += Sample_Time_MS;
-    }
-    return ESP_FAIL;
-}
-
-
 
 bool send_data(const char *data, uint32_t size) {
     uart_write_bytes(UART_PORT, data, size);
@@ -180,28 +108,33 @@ void app_main(void) {
     Dashboard_Init(send_data, read_uart, get_uart_data_size);
     int32_t num = 1;
     int32_t num2 = 3;
-    float f = 1.4f;
+    float f = 1.9f;
     Dashboard_Register_LiveInt("AA", "VoltNum", &num);
     Dashboard_Register_LiveInt("AB", "VoltNum2", &num2);
     Dashboard_Register_LiveFloat("AC", "Float1", &f);
+    ESP_ERROR_CHECK(ADS1115_StartSampler(ads));
+    ads1115_snapshot_t snap;
+    uint64_t lastTimeStamp = 0;
     while (1) {
         if (num == 11) {
             Dashboard_Alert("idek anymore");
         }
         ESP_ERROR_CHECK(MCP4725_Set_Output_Voltage(dev_dac2, f));
-        uint16_t config = ads1115_make_config(muxArray[3]);
-        ESP_ERROR_CHECK(ads1115_write_config(ads, config));
-        float res;
+        if (ADS1115_GetLatest(&snap, 10)) {
+            Dashboard_Telemetry_Float("AN0", snap.data[0]);
+            Dashboard_Telemetry_Float("AN1", snap.data[1]);
+            Dashboard_Telemetry_Float("AN2", snap.data[2]);
+            Dashboard_Telemetry_Float("AN3", snap.data[3]);
+            Dashboard_Telemetry_Int("Time Diff", (snap.timestamp_us / 1000));
+            lastTimeStamp = snap.timestamp_us;
+        } else {
+            ESP_LOGI(TAG, "AN3 failed");
+        }
         Dashboard_Telemetry_Int("Number", num);
         Dashboard_Telemetry_Int("Number2", num2);
         Dashboard_Telemetry_Float("Float1", f);
-        if (read_data(ads, &res, 100) == ESP_OK) {
-            Dashboard_Telemetry_Float("AN3", res);
-        } else {
-            ESP_LOGI(TAG, "AN%d failed");
-        }
         Dashboard_Send();
-        vTaskDelay(pdMS_TO_TICKS(100));
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 
     // ESP_ERROR_CHECK(i2c_master_bus_rm_device(ads));
