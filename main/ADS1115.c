@@ -96,7 +96,7 @@ static void ads1115_sampler_task(void *arg) {
         // Optional: tiny yield to let other tasks run. At 4ch*~1.2ms ~= 4.8ms,
         // this loop already yields on I2C and esp_rom_delay_us, so no vTaskDelay is required.
         //taskYIELD();
-        vTaskDelay(pdMS_TO_TICKS(1));
+        vTaskDelay(pdMS_TO_TICKS(5));
     }
 }
 

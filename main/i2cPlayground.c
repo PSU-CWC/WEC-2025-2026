@@ -11,6 +11,7 @@
 #include "Dashboard.h"
 #include "MCP4725.h"
 #include "ADS1115.h"
+#include "DeltaTime.h"
 
 static const char *TAG = "Main";
 
@@ -20,6 +21,8 @@ static const char *TAG = "Main";
 #define I2C_FREQ_HZ         100000
 #define UART_PORT UART_NUM_0
 #define BUF_SIZE  1024
+#define V_SNS1_Ratio 15.87f
+#define Step_Ratio 0.000244f
 enum {
     ADS1115_I2C_Addr = 0x48, // ADDR -> GND
     DAC1_I2C_ADDR = 0x60,
@@ -60,7 +63,7 @@ void app_main(void) {
 
     i2c_master_dev_handle_t ads = NULL;
     i2c_master_dev_handle_t dev_dac1 = NULL;
-    i2c_master_dev_handle_t dev_dac2 = NULL;
+    //i2c_master_dev_handle_t dev_dac2 = NULL;
     i2c_device_config_t dev_cfg = {
             .dev_addr_length = I2C_ADDR_BIT_LEN_7,
             .device_address  = ADS1115_I2C_Addr,
@@ -91,7 +94,7 @@ void app_main(void) {
 
     ESP_ERROR_CHECK(i2c_master_bus_add_device(bus, &dev_cfg, &ads));
     ESP_ERROR_CHECK(i2c_master_bus_add_device(bus, &dev_dac1_cfg, &dev_dac1));
-    ESP_ERROR_CHECK(i2c_master_bus_add_device(bus, &dev_dac2_cfg, &dev_dac2));
+    //ESP_ERROR_CHECK(i2c_master_bus_add_device(bus, &dev_dac2_cfg, &dev_dac2));
 
     ESP_LOGI(TAG, "I2C ready on SDA=%d SCL=%d @ %d Hz, ADS1115 @ 0x%02X", I2C_SDA_PIN, I2C_SCL_PIN, I2C_FREQ_HZ,
              ADS1115_I2C_Addr);
@@ -106,35 +109,60 @@ void app_main(void) {
 
 
     Dashboard_Init(send_data, read_uart, get_uart_data_size);
-    int32_t num = 1;
-    int32_t num2 = 3;
-    float f = 1.9f;
-    Dashboard_Register_LiveInt("AA", "VoltNum", &num);
-    Dashboard_Register_LiveInt("AB", "VoltNum2", &num2);
-    Dashboard_Register_LiveFloat("AC", "Float1", &f);
+    float RESISTANCE = 30;
+    int32_t targetPower = 2;
+    float OutputVoltage = 0.02f;
+    float kp = 0.002f;
+   // Dashboard_Register_LiveFloat("AA", "Resistance", &RESISTANCE);
+    Dashboard_Register_LiveInt("AB", "targetPower", &targetPower);
+   // Dashboard_Register_LiveFloat("AC", "DACVolt", &OutputVoltage);
+    Dashboard_Register_LiveFloat("AD", "pro", &kp);
     ESP_ERROR_CHECK(ADS1115_StartSampler(ads));
     ads1115_snapshot_t snap;
-    uint64_t lastTimeStamp = 0;
+    DeltaTime_t dt;
+    DeltaTime_Init(&dt);
+    DeltaTime_Update(&dt);
     while (1) {
-        if (num == 11) {
-            Dashboard_Alert("idek anymore");
-        }
-        ESP_ERROR_CHECK(MCP4725_Set_Output_Voltage(dev_dac2, f));
+        ESP_ERROR_CHECK(MCP4725_Set_Output_Voltage(dev_dac1, OutputVoltage));
         if (ADS1115_GetLatest(&snap, 10)) {
-            Dashboard_Telemetry_Float("AN0", snap.data[0]);
-            Dashboard_Telemetry_Float("AN1", snap.data[1]);
-            Dashboard_Telemetry_Float("AN2", snap.data[2]);
-            Dashboard_Telemetry_Float("AN3", snap.data[3]);
-            Dashboard_Telemetry_Int("Time Diff", (snap.timestamp_us / 1000));
-            lastTimeStamp = snap.timestamp_us;
+
+            float V_F1 = snap.data[0];
+
+            float Real_Current = V_F1 * 4;
+            float V_Load = snap.data[3] * V_SNS1_Ratio;
+            float actual_resistance = V_Load / Real_Current;
+
+            float curPower = V_Load * Real_Current;
+            //Const Power
+            Dashboard_Telemetry_Float("CurPower", curPower);
+            if (DeltaTime_Get_MS(&dt) > 5) {
+                Dashboard_Telemetry_Float("Diff Power", ((float) targetPower - curPower) * kp);
+                OutputVoltage += ((float) targetPower - curPower) * kp;
+                DeltaTime_Update(&dt);
+            }
+
+//            if (DeltaTime_Get_MS(&dt) > 5) {
+//                if (RESISTANCE - actual_resistance > 0) {
+//                    //ESP_LOGI(TAG, "Decreasing float");
+//                    OutputVoltage -= Step_Ratio;
+//                } else {
+//                    //ESP_LOGI(TAG, "Increasing float");
+//                    OutputVoltage += Step_Ratio;
+//                }
+//                DeltaTime_Update(&dt);
+//            }
+
+            Dashboard_Telemetry_Float("Load_Voltage", V_Load);
+            Dashboard_Telemetry_Float("kp", kp);
+            Dashboard_Telemetry_Int("Time Diff", DeltaTime_Get_MS(&dt));
+            Dashboard_Telemetry_Float("Resistance", actual_resistance);
+            Dashboard_Telemetry_Float("DAC_CMD_Output", OutputVoltage);
         } else {
             ESP_LOGI(TAG, "AN3 failed");
         }
-        Dashboard_Telemetry_Int("Number", num);
-        Dashboard_Telemetry_Int("Number2", num2);
-        Dashboard_Telemetry_Float("Float1", f);
+
         Dashboard_Send();
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(5));
     }
 
     // ESP_ERROR_CHECK(i2c_master_bus_rm_device(ads));
