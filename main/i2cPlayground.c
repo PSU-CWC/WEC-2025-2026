@@ -12,6 +12,8 @@
 #include "MCP4725.h"
 #include "ADS1115.h"
 #include "DeltaTime.h"
+#include "Util.h"
+#include "Servo.h"
 
 static const char *TAG = "Main";
 
@@ -111,19 +113,37 @@ void app_main(void) {
     Dashboard_Init(send_data, read_uart, get_uart_data_size);
     float RESISTANCE = 30;
     int32_t targetPower = 2;
-    float OutputVoltage = 0.02f;
+    float OutputVoltage = 0.00f;
     float kp = 0.002f;
-   // Dashboard_Register_LiveFloat("AA", "Resistance", &RESISTANCE);
+    int32_t pos = 50;
+    // Dashboard_Register_LiveFloat("AA", "Resistance", &RESISTANCE);
     Dashboard_Register_LiveInt("AB", "targetPower", &targetPower);
-   // Dashboard_Register_LiveFloat("AC", "DACVolt", &OutputVoltage);
-    Dashboard_Register_LiveFloat("AD", "pro", &kp);
+    // Dashboard_Register_LiveFloat("AC", "DACVolt", &OutputVoltage);
+    Dashboard_Register_LiveInt("AD", "ServoPos", &pos);
     ESP_ERROR_CHECK(ADS1115_StartSampler(ads));
     ads1115_snapshot_t snap;
     DeltaTime_t dt;
     DeltaTime_Init(&dt);
     DeltaTime_Update(&dt);
+
+
+//    gpio_config_t io_conf = {
+//            .pin_bit_mask = 1ULL << GPIO_NUM_13,
+//            .mode = GPIO_MODE_OUTPUT,
+//            .pull_up_en = GPIO_PULLUP_DISABLE,
+//            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+//            .intr_type = GPIO_INTR_DISABLE
+//    };
+//
+//    gpio_config(&io_conf);
+//    gpio_set_level(GPIO_NUM_13, 1);
+    bool ledStatus = false;
+
+
+    Servo_Init();
     while (1) {
         ESP_ERROR_CHECK(MCP4725_Set_Output_Voltage(dev_dac1, OutputVoltage));
+        Servo_Set_Pulse_US((uint8_t) pos);
         if (ADS1115_GetLatest(&snap, 10)) {
 
             float V_F1 = snap.data[0];
@@ -135,11 +155,12 @@ void app_main(void) {
             float curPower = V_Load * Real_Current;
             //Const Power
             Dashboard_Telemetry_Float("CurPower", curPower);
-            if (DeltaTime_Get_MS(&dt) > 5) {
-                Dashboard_Telemetry_Float("Diff Power", ((float) targetPower - curPower) * kp);
-                OutputVoltage += ((float) targetPower - curPower) * kp;
-                DeltaTime_Update(&dt);
-            }
+//            if (DeltaTime_Get_MS(&dt) > 5) {
+//                Dashboard_Telemetry_Float("Diff Power", ((float) targetPower - curPower) * kp);
+//                OutputVoltage += ((float) targetPower - curPower) * kp;
+//                OutputVoltage = clamp(OutputVoltage, 0, 3.3f);
+//                DeltaTime_Update(&dt);
+//            }
 
 //            if (DeltaTime_Get_MS(&dt) > 5) {
 //                if (RESISTANCE - actual_resistance > 0) {
@@ -160,6 +181,13 @@ void app_main(void) {
         } else {
             ESP_LOGI(TAG, "AN3 failed");
         }
+//        if(ledStatus){
+//            gpio_set_level(GPIO_NUM_13, 1);
+//
+//        }else{
+//            gpio_set_level(GPIO_NUM_13, 0);
+//        }
+        ledStatus = !ledStatus;
 
         Dashboard_Send();
         vTaskDelay(pdMS_TO_TICKS(5));

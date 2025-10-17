@@ -174,7 +174,7 @@ void processData() {
         if (readSize != sizeof(dashboard.packet.packet_id) || dashboard.packet.packet_id != 0x13) {
             return;
         }
-        ESP_LOGI("Dashboard", "Received packet id");
+        //ESP_LOGI("Dashboard", "Received packet id");
         uint32_t remainingPacketSize = sizeof(Packet_t) - sizeof(dashboard.packet.packet_id);
         readSize = dashboard.readData((char *) &dashboard.packet.packet_length, remainingPacketSize);
         uint32_t packetSizeWithCRC = sizeof(Packet_t) - sizeof(dashboard.packet.checksum);
@@ -182,14 +182,13 @@ void processData() {
         if (readSize != remainingPacketSize) {
             return;
         }
-        ESP_LOGI("Dashboard", "Received entire packet");
+        //ESP_LOGI("Dashboard", "Received entire packet");
         char dataType = dashboard.packet.data_buf[0];
         if (dataType == 'I') {
-            ESP_LOGI("Dashboard", "Integer type found");
+            //ESP_LOGI("Dashboard", "Integer type found");
 
             int8_t idx = -1;
-            ESP_LOGI("Dashboard", "b (hex) = %02X %02X %02X", (unsigned) dashboard.packet.data_buf[0],
-                     (unsigned) dashboard.packet.data_buf[1], (unsigned) dashboard.packet.data_buf[2]);
+            //ESP_LOGI("Dashboard", "b (hex) = %02X %02X %02X", (unsigned) dashboard.packet.data_buf[0],(unsigned) dashboard.packet.data_buf[1], (unsigned) dashboard.packet.data_buf[2]);
 
             for (int8_t i = 0; i < dashboard.intCount; i++) {
                 if (memcmp(dashboard.packet.data_buf, integerMapKeys[i], sizeof(integerMapKeys[0])) == 0) {
@@ -198,16 +197,15 @@ void processData() {
                 }
             }
             if (idx != -1) {
-                ESP_LOGI("Dashboard", "received int %d", dashboard.packet.int_data);
+                //ESP_LOGI("Dashboard", "received int %d", dashboard.packet.int_data);
 
                 *intMapValues[idx] = dashboard.packet.int_data;
             }
         } else if (dataType == 'F') {
-            ESP_LOGI("Dashboard", "Float type found");
+            //ESP_LOGI("Dashboard", "Float type found");
 
             int8_t idx = -1;
-            ESP_LOGI("Dashboard", "b (hex) = %02X %02X %02X", (unsigned) dashboard.packet.data_buf[0],
-                     (unsigned) dashboard.packet.data_buf[1], (unsigned) dashboard.packet.data_buf[2]);
+            //ESP_LOGI("Dashboard", "b (hex) = %02X %02X %02X", (unsigned) dashboard.packet.data_buf[0],(unsigned) dashboard.packet.data_buf[1], (unsigned) dashboard.packet.data_buf[2]);
 
             for (int8_t i = 0; i < dashboard.floatCount; i++) {
                 if (memcmp(dashboard.packet.data_buf, floatMapKeys[i], sizeof(floatMapKeys[0])) == 0) {
@@ -216,7 +214,7 @@ void processData() {
                 }
             }
             if (idx != -1) {
-                ESP_LOGI("Dashboard", "received float %d", dashboard.packet.float_data);
+                //ESP_LOGI("Dashboard", "received float %d", dashboard.packet.float_data);
 
                 *floatMapValues[idx] = dashboard.packet.float_data;
             }
